@@ -235,7 +235,13 @@ public class WordReview {
         List<Integer> dueWords = getWordsDueForReview(connection);
         Scanner scanner = new Scanner(System.in);
 
-        for (int wordId : dueWords) {
+        // Lista słów do ponownego sprawdzenia
+        List<Integer> wordsToRetry = new ArrayList<>(dueWords);
+
+        while (!wordsToRetry.isEmpty()) {
+            // Pobieramy pierwsze ID z listy
+            int wordId = wordsToRetry.remove(0);
+
             String fetchQuery = "SELECT word, translation, review_stage FROM words WHERE id = ?";
             try (PreparedStatement stmt = connection.prepareStatement(fetchQuery)) {
                 stmt.setInt(1, wordId);
@@ -266,13 +272,19 @@ public class WordReview {
                         scheduleNextReview(connection, wordId, currentStage);
                     } else {
                         System.out.println("Niepoprawne tłumaczenie. Poprawne tłumaczenia to: " + correctTranslation);
+
+                        // Dodajemy ID ponownie na koniec listy
+                        wordsToRetry.add(wordId);
                     }
                 }
             } catch (SQLException e) {
                 e.printStackTrace();
             }
         }
+
+        System.out.println("Wszystkie frazy powtórzone.");
     }
+
 
     // Nowa metoda porównująca tłumaczenia z uwzględnieniem słów kluczowych
     public static boolean areTranslationsSimilar(String userTranslation, String correctTranslation) {
@@ -301,41 +313,39 @@ public class WordReview {
 
 
     public static void runProgram(String dbUrl) {
-
         try (Connection connection = DriverManager.getConnection(dbUrl)) {
             Scanner scanner = new Scanner(System.in);
             int option = -1;
 
             while (option != 0) {
-                System.out.println("\nWybierz opcję:");
-                System.out.println("1. Dodaj słowo i tłumaczenie");
-                System.out.println("2. Znajdź tłumaczenie angielskiego słowa");
+                System.out.println("\n--- MENU ---");
+                System.out.println("1. Dodaj frazę i tłumaczenie");
+                System.out.println("2. Znajdź tłumaczenie angielskiego słowa ");
                 System.out.println("3. Sprawdź słowa do powtórki");
+                System.out.println("4. Popraw frazę");
                 System.out.println("0. Zakończ");
                 System.out.print("Wybór: ");
 
                 try {
                     if (scanner.hasNextInt()) {
                         option = scanner.nextInt();
-                        scanner.nextLine();
+                        scanner.nextLine(); // Wyczyść bufor
 
                         switch (option) {
                             case 1:
-                                System.out.print("Podaj słowo po angielsku: ");
-                                String word = scanner.nextLine();
-                                System.out.print("Podaj tłumaczenie: ");
-                                String translation = scanner.nextLine();
-                                addWordToDatabase(word, translation, connection);
+                                addWord(scanner, connection);
                                 break;
 
                             case 2:
-                                System.out.print("Podaj słowo do wyszukania: ");
-                                String searchWord = scanner.nextLine();
-                                findTranslationWithTypos(connection, searchWord);
+                                findTranslation(scanner, connection);
                                 break;
 
                             case 3:
                                 reviewWordsWithTranslation(connection);
+                                break;
+
+                            case 4:
+                                updatePhrase(scanner, connection);
                                 break;
 
                             case 0:
@@ -348,17 +358,83 @@ public class WordReview {
                         }
                     } else {
                         System.out.println("Nieprawidłowy wybór! Proszę wpisać liczbę.");
-                        scanner.next();
+                        scanner.next(); // Odrzuć nieprawidłowe dane
                     }
                 } catch (Exception e) {
-                    System.out.println("Błąd: " + e.getMessage());
-                    scanner.nextLine();
+                    System.out.println("Wystąpił błąd: " + e.getMessage());
+                    scanner.nextLine(); // Odrzuć pozostałe dane w buforze
                 }
             }
         } catch (SQLException e) {
-            e.printStackTrace();
+            System.err.println("Błąd połączenia z bazą danych: " + e.getMessage());
         }
     }
+
+    // Dodanie słowa i tłumaczenia
+    private static void addWord(Scanner scanner, Connection connection) {
+        try {
+            System.out.print("Podaj słowo po angielsku: ");
+            String word = scanner.nextLine();
+            System.out.print("Podaj tłumaczenie: ");
+            String translation = scanner.nextLine();
+            addWordToDatabase(word, translation, connection);
+            System.out.println("Słowo zostało dodane pomyślnie.");
+        } catch (Exception e) {
+            System.out.println("Nie udało się dodać słowa: " + e.getMessage());
+        }
+    }
+
+    // Wyszukiwanie tłumaczenia
+    private static void findTranslation(Scanner scanner, Connection connection) {
+        try {
+            System.out.print("Podaj słowo do wyszukania: ");
+            String searchWord = scanner.nextLine();
+            findTranslationWithTypos(connection, searchWord);
+        } catch (Exception e) {
+            System.out.println("Nie udało się znaleźć tłumaczenia: " + e.getMessage());
+        }
+    }
+
+    // Aktualizacja frazy
+    private static void updatePhrase(Scanner scanner, Connection connection) {
+        try {
+            System.out.print("Podaj frazę, którą chcesz poprawić: ");
+            String phraseToUpdate = scanner.nextLine();
+
+            String fetchQuery = "SELECT id, word, translation FROM words WHERE word = ?";
+            try (PreparedStatement fetchStmt = connection.prepareStatement(fetchQuery)) {
+                fetchStmt.setString(1, phraseToUpdate);
+                ResultSet rs = fetchStmt.executeQuery();
+
+                if (rs.next()) {
+                    int wordId = rs.getInt("id");
+                    String currentTranslation = rs.getString("translation");
+
+                    System.out.println("Obecne tłumaczenie: " + currentTranslation);
+                    System.out.print("Podaj nowe tłumaczenie: ");
+                    String newTranslation = scanner.nextLine();
+
+                    String updateQuery = "UPDATE words SET translation = ? WHERE id = ?";
+                    try (PreparedStatement updateStmt = connection.prepareStatement(updateQuery)) {
+                        updateStmt.setString(1, newTranslation);
+                        updateStmt.setInt(2, wordId);
+                        int rowsAffected = updateStmt.executeUpdate();
+
+                        if (rowsAffected > 0) {
+                            System.out.println("Tłumaczenie zostało zaktualizowane.");
+                        } else {
+                            System.out.println("Nie udało się zaktualizować tłumaczenia.");
+                        }
+                    }
+                } else {
+                    System.out.println("Nie znaleziono frazy w bazie danych.");
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Wystąpił błąd podczas aktualizacji frazy: " + e.getMessage());
+        }
+    }
+
 
     public static void main(String[] args) {
         String dbFileName = "words.db";
