@@ -187,50 +187,6 @@ public class WordReview {
         return wordIds;
     }
 
-
-//    public static void reviewWordsWithTranslation(Connection connection) {
-//        List<Integer> dueWords = getWordsDueForReview(connection);
-//        Scanner scanner = new Scanner(System.in);
-//
-//        for (int wordId : dueWords) {
-//            String fetchQuery = "SELECT word, translation, review_stage FROM words WHERE id = ?";
-//            try (PreparedStatement stmt = connection.prepareStatement(fetchQuery)) {
-//                stmt.setInt(1, wordId);
-//                ResultSet rs = stmt.executeQuery();
-//
-//                if (rs.next()) {
-//                    String word = rs.getString("word");
-//                    String correctTranslation = rs.getString("translation");
-//                    int currentStage = rs.getInt("review_stage");
-//
-//                    System.out.print("Podaj tłumaczenie dla frazy '" + word + "': ");
-//                    String userTranslation = scanner.nextLine();
-//
-//                    // Split poprawnych tłumaczeń
-//                    String[] correctTranslations = correctTranslation.split(",");
-//
-//                    boolean isCorrect = false;
-//                    for (String correct : correctTranslations) {
-//                        correct = correct.trim().toLowerCase();
-//                        if (levenshteinDistance(userTranslation.toLowerCase().trim(), correct) <= 2) {
-//                            isCorrect = true;
-//                            break;
-//                        }
-//                    }
-//
-//                    if (isCorrect) {
-//                        System.out.println("Poprawne tłumaczenie. Inne możliwe: " + correctTranslation);
-//                        scheduleNextReview(connection, wordId, currentStage);
-//                    } else {
-//                        System.out.println("Niepoprawne tłumaczenie. Poprawne tłumaczenia to: " + correctTranslation);
-//                    }
-//                }
-//            } catch (SQLException e) {
-//                e.printStackTrace();
-//            }
-//        }
-//    }
-
     public static void reviewWordsWithTranslation(Connection connection) {
         List<Integer> dueWords = getWordsDueForReview(connection);
         Scanner scanner = new Scanner(System.in);
@@ -286,7 +242,6 @@ public class WordReview {
     }
 
 
-    // Nowa metoda porównująca tłumaczenia z uwzględnieniem słów kluczowych
     public static boolean areTranslationsSimilar(String userTranslation, String correctTranslation) {
         // Podziel tłumaczenia na poszczególne słowa
         String[] userWords = userTranslation.split(" ");
@@ -323,6 +278,7 @@ public class WordReview {
                 System.out.println("2. Znajdź tłumaczenie angielskiego słowa ");
                 System.out.println("3. Sprawdź słowa do powtórki");
                 System.out.println("4. Popraw frazę");
+                System.out.println("5. Quiz, 10 losowych powtórek");
                 System.out.println("0. Zakończ");
                 System.out.print("Wybór: ");
 
@@ -346,6 +302,10 @@ public class WordReview {
 
                             case 4:
                                 updatePhrase(scanner, connection);
+                                break;
+
+                            case 5:
+                                quizCheckTen(connection);
                                 break;
 
                             case 0:
@@ -456,4 +416,68 @@ public class WordReview {
             e.printStackTrace();
         }
     }
+
+    //Metoda do weryfikacji tłumaczenia 10 losowych fraz
+    public static void quizCheckTen(Connection connection) {
+        // Query to select 10 random words from the database
+        String query = "SELECT id, word, translation, review_stage FROM words ORDER BY RANDOM() LIMIT 10";
+        int correctCount = 0;
+        int totalCount = 0;
+        Scanner scanner = new Scanner(System.in);
+        Random random = new Random();
+
+        try (Statement stmt = connection.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
+
+            while (rs.next()) {
+                totalCount++;
+                int wordId = rs.getInt("id");
+                String word = rs.getString("word");               // Expected to be the English word
+                String translation = rs.getString("translation"); // Expected Polish translation(s)
+                int currentStage = rs.getInt("review_stage");
+
+                // Randomly decide whether to ask for the Polish translation or for the English translation
+                boolean askPolish = random.nextBoolean();
+                String prompt;
+                String expectedAnswer; // This will contain either the correct Polish translation(s) or the English word
+
+                if (askPolish) {
+                    // Ask: Provide the Polish translation for the given English word
+                    prompt = "Podaj tłumaczenie dla słowa '" + word + ": ";
+                    expectedAnswer = translation;  // Possibly multiple correct answers separated by commas
+                } else {
+                    // Ask: Provide the English translation for the given Polish phrase
+                    prompt = "Podaj angielskie tłumaczenie dla frazy '" + translation + ": ";
+                    expectedAnswer = word;  // Typically a single English word
+                }
+
+                System.out.print(prompt);
+                String userAnswer = scanner.nextLine();
+
+                // Split expectedAnswer in case it contains multiple possible answers separated by commas
+                String[] expectedAnswers = expectedAnswer.split(",");
+                boolean isCorrect = false;
+                for (String exp : expectedAnswers) {
+                    exp = exp.trim().toLowerCase();
+                    if (levenshteinDistance(userAnswer.toLowerCase().trim(), exp) <= 2) {
+                        isCorrect = true;
+                        break;
+                    }
+                }
+
+                if (isCorrect) {
+                    System.out.println("Poprawne!");
+                    correctCount++;
+                } else {
+                    System.out.println("Niepoprawne. Prawidłowe odpowiedzi to: " + expectedAnswer);
+                }
+            }
+
+            double score = (double) correctCount / totalCount * 100;
+            System.out.printf("Twój wynik: %.2f%% (%d z %d poprawnych odpowiedzi)%n", score, correctCount, totalCount);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
 }
