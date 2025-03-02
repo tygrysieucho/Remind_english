@@ -84,36 +84,63 @@ public class WordReview {
 
     // Metoda do zaplanowania kolejnych powtórek
     public static void scheduleNextReview(Connection connection, int wordId, int currentStage) {
-        String updateQuery = "UPDATE words SET last_review_date = ?, review_stage = ? WHERE id = ?";
-        LocalDateTime nextReviewDate = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        int nextStage = currentStage;
+        // Pobierz datę ostatniej powtórki lub dodania słowa
+        String fetchDateQuery = "SELECT COALESCE(last_review_date, added_date) AS base_date FROM words WHERE id = ?";
+        LocalDateTime baseDate = null;
+        try (PreparedStatement dateStmt = connection.prepareStatement(fetchDateQuery)) {
+            dateStmt.setInt(1, wordId);
+            ResultSet rs = dateStmt.executeQuery();
+            if (rs.next()) {
+                Timestamp ts = rs.getTimestamp("base_date");
+                if (ts != null) {
+                    baseDate = ts.toLocalDateTime();
+                } else {
+                    baseDate = LocalDateTime.now(); // Handle potential null case defensively
+                }
+            } else {
+                baseDate = LocalDateTime.now();
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+            baseDate = LocalDateTime.now();
+        }
 
+        int daysToAdd = 0;
+        int nextStage = currentStage;
         switch (currentStage) {
             case 0:
-                nextReviewDate = calculateNextReview(nextReviewDate, 1);
+                daysToAdd = 1;
                 nextStage = 1;
                 break;
             case 1:
-                nextReviewDate = calculateNextReview(nextReviewDate, 3);
+                daysToAdd = 3;
                 nextStage = 2;
                 break;
             case 2:
-                nextReviewDate = calculateNextReview(nextReviewDate, 6);
+                daysToAdd = 6;
                 nextStage = 3;
                 break;
+            default:
+                daysToAdd = 0;
+                break;
         }
+
+        LocalDateTime nextReviewDate = calculateNextReview(baseDate, daysToAdd); // Use the calculated baseDate
+        String updateQuery = "UPDATE words SET last_review_date = ?, review_stage = ? WHERE id = ?";
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"); //Added hours and minutes
 
         try (PreparedStatement stmt = connection.prepareStatement(updateQuery)) {
             stmt.setTimestamp(1, Timestamp.valueOf(nextReviewDate));
             stmt.setInt(2, nextStage);
             stmt.setInt(3, wordId);
             stmt.executeUpdate();
-            System.out.println("Kolejna powtórka " + nextReviewDate.format(formatter));
+            System.out.println("Kolejna powtórka zaplanowana na: " + nextReviewDate.format(formatter));
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
+
 
     // Metoda do wyszukiwania tłumaczenia z tolerancją na literówki
     public static void findTranslationWithTypos(Connection connection, String searchWord) {
@@ -166,15 +193,15 @@ public class WordReview {
     }
 
     public static List<Integer> getWordsDueForReview(Connection connection) {
-        String query = "SELECT id FROM words " +
-                "WHERE last_review_date IS NULL " +
-                "   OR (DATE(last_review_date, " +
-                "        CASE review_stage " +
-                "            WHEN 0 THEN '+1 day' " +  // First review: +1 day
-                "            WHEN 1 THEN '+3 days' " + // Second review: +3 days
-                "            WHEN 2 THEN '+6 days' " + // Third review: +6 days
-                "            ELSE '+0 day' " +
-                "        END) <= DATE('now'))";
+        String query = "SELECT id,\n" +
+                "       DATE(DATETIME(last_review_date / 1000, 'unixepoch'),\n" +
+                "            CASE review_stage\n" +
+                "                WHEN 0 THEN '+1 day'\n" +
+                "                WHEN 1 THEN '+3 days'\n" +
+                "                WHEN 2 THEN '+6 days'\n" +
+                "                ELSE '+0 day'\n" +
+                "            END) AS next_review_date\n" +
+                "FROM words;\n";
         List<Integer> wordIds = new ArrayList<>();
         try (Statement stmt = connection.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
@@ -443,11 +470,11 @@ public class WordReview {
 
                 if (askPolish) {
                     // Ask: Provide the Polish translation for the given English word
-                    prompt = "Podaj tłumaczenie dla słowa '" + word + ": ";
+                    prompt = "Podaj tłumaczenie dla słowa " + word + ": ";
                     expectedAnswer = translation;  // Possibly multiple correct answers separated by commas
                 } else {
                     // Ask: Provide the English translation for the given Polish phrase
-                    prompt = "Podaj angielskie tłumaczenie dla frazy '" + translation + ": ";
+                    prompt = "Podaj angielskie tłumaczenie dla frazy " + translation + ": ";
                     expectedAnswer = word;  // Typically a single English word
                 }
 
